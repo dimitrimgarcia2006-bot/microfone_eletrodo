@@ -89,10 +89,14 @@ espera.
 
 ### 2. Segmentação (`main.c`)
 
-As amostras são juntadas em quadros de `N_FFT` = 2048 amostras (256 ms). A
-cada quadro processado, a segunda metade é reaproveitada no próximo (passo
-`HOP` = 1024, 50% de sobreposição). Assim sai um resultado a cada 128 ms, e
+As amostras são juntadas em quadros de `N_FFT` = 2048 amostras, que cobrem
+256 ms de som. Depois de processar um quadro, a segunda metade dele vira o
+início do próximo (passo `HOP` = 1024 amostras, 50% de sobreposição). Assim,
 nenhuma amostra fica só na borda da janela, onde a Hann quase a zera.
+
+Um quadro novo fica pronto sempre que chegam 1024 amostras novas, ou seja, a
+cada 128 ms. Esse é o tempo de **juntar** as amostras, não o de processá-las:
+veja [Tempos de amostragem e processamento](#5-tempos-de-amostragem-e-processamento).
 
 ### 3. Detecção da fundamental (`pitch.c`)
 
@@ -130,6 +134,57 @@ documentado em `main/viz.h`.
   é descartado.
 - O texto do firmware (`printf`) passa pelo mesmo driver e aparece no
   terminal do script.
+
+### 5. Tempos de amostragem e processamento
+
+Três intervalos diferentes aparecem no firmware, e é fácil confundi-los:
+
+| Intervalo  | O que é                                      | Conta                                |
+|------------|----------------------------------------------|--------------------------------------|
+| **32 ms**  | entre dois blocos do DMA                     | 256 amostras ÷ 8000 amostras/s       |
+| **128 ms** | entre dois resultados                        | `HOP` = 1024 amostras ÷ 8000 amostras/s |
+| **256 ms** | duração de um quadro                         | `N_FFT` = 2048 amostras ÷ 8000 amostras/s |
+
+Os 128 ms **não são o tempo de processamento**. São o tempo de esperar 1024
+amostras novas chegarem do ADC. O processamento em si (média, Hann, FFT, busca
+do f0 e envio ao visualizador) roda uma vez a cada 128 ms e ocupa só uma
+pequena parte desse intervalo; a FFT da esp-dsp é otimizada em assembly para o
+ESP32-S3.
+
+```
+t (ms)    0     32    64    96    128   160   192   224   256   288   320   352   384
+DMA       ├─B1──┼─B2──┼─B3──┼─B4──┼─B5──┼─B6──┼─B7──┼─B8──┼─B9──┼─B10─┼─B11─┼─B12─┤
+fill      256   512   768   1024  1280  1536  1792  2048                    2048
+                                                     ▲                       ▲
+                                                 processa                processa
+                                                 fill = 1024             fill = 1024
+```
+
+- O primeiro resultado sai em 256 ms, quando o primeiro quadro enche. Depois,
+  sai um a cada 128 ms.
+- Na maior parte do tempo, a task está **dormindo** em `mic_adc_read()`. Ela
+  acorda a cada 32 ms, copia o bloco para `frame[]` (microssegundos) e volta a
+  dormir. Só no bloco que completa o quadro ela roda `pitch_process()`.
+- Enquanto a task processa, o DMA continua gravando os blocos novos no
+  ringbuffer do driver, sem usar a CPU. Na leitura seguinte, ela pega o que
+  acumulou.
+
+**Por que não há overflow.** O ringbuffer do driver guarda 8 blocos, ou seja,
+2048 amostras ou 256 ms de som (`max_store_buf_size` em `mic_adc.c`). Quando o
+processamento começa, ele está praticamente vazio, porque a task acabou de ler
+o bloco. Para ele encher, seria preciso:
+
+- uma pausa isolada de mais de 256 ms sem ler o ADC; ou
+- um processamento que, **em média**, levasse mais de 128 ms por quadro. Nesse
+  caso, a task ficaria cada vez mais atrasada até o buffer encher.
+
+Se o buffer enchesse, o ESP não travaria: o driver descartaria os blocos novos
+sem avisar, e o sinal teria buracos.
+
+Se mudar `N_FFT` ou `HOP` em `config.h`, esses tempos mudam: sai um resultado
+a cada `HOP / SAMPLE_RATE_HZ` segundos, e o processamento de um quadro precisa
+caber nesse intervalo. A folga do ringbuffer não muda, porque ela é definida
+pelo tamanho do bloco do DMA (`mic_adc.c`), não pelo tamanho do quadro.
 
 ### Parâmetros principais
 
