@@ -1,0 +1,5 @@
+# Dependências do tools/visualizador.py (testado com Python 3.15)
+pyserial==3.5
+numpy==2.5.4
+pyqtgraph==0.14.0
+PySide6-Essentials==6.12.0
