@@ -1,7 +1,7 @@
 /*
  * Afinador eletrônico (Tema I)
  * Microfone eletreto -> ADC contínuo -> segmentação -> Hann -> FFT -> nota
- * ESP32-S3, ESP-IDF v5.1 ou superior, componente espressif/esp-dsp
+ * ESP32-S3, ESP-IDF v6.0 (testado com v6.0.1), componente espressif/esp-dsp
  *
  * Módulos:
  *   config.h   parâmetros compartilhados (fs, N_FFT, HOP, faixa de notas)
